@@ -1,12 +1,12 @@
-AddCSLuaFile()
-
 require( "pon" )
+
 if SERVER then
     util.AddNetworkString( "express" )
     util.AddNetworkString( "express_proof" )
     util.AddNetworkString( "express_receivers_made" )
 end
 
+---@diagnostic disable-next-line
 express = {}
 express._receivers = {}
 express._protocol = "http"
@@ -16,20 +16,17 @@ express._maxDataSize = 24 * 1024 * 1024
 express._jsonHeaders = { ["Content-Type"] = "application/json" }
 express._bytesHeaders = { ["Accept"] = "application/octet-stream" }
 
-
 -- Removes a receiver --
 function express.ClearReceiver( message )
     message = string.lower( message )
     express._receivers[message] = nil
 end
 
-
 -- Registers a PreDownload receiver --
 function express.ReceivePreDl( message, preDl )
     message = string.lower( message )
     express._preDlReceivers[message] = preDl
 end
-
 
 -- Retrieves and parses the data for given ID --
 function express:Get( id, cb, _attempts )
@@ -50,9 +47,9 @@ function express:Get( id, cb, _attempts )
             print( "express:Get() succeeded after " .. _attempts .. " attempts: " .. id )
         end
 
-        if string.StartWith( body, "<enc>" ) then
+        if string.StartsWith( body, "<enc>" ) then
             body = util.Decompress( string.sub( body, 6 ) )
-            if ( not body ) or #body == 0 then
+            if (not body) or #body == 0 then
                 error( "Express: Failed to decompress data for ID '" .. id .. "'." )
             end
         end
@@ -71,7 +68,6 @@ function express:Get( id, cb, _attempts )
         timeout = self:_getTimeout()
     } )
 end
-
 
 -- Asks the API for this ID's data's size --
 function express:GetSize( id, cb )
@@ -103,7 +99,6 @@ function express:GetSize( id, cb )
     } )
 end
 
-
 -- Given prepared data, sends it to the API --
 function express:Put( data, cb )
     local success = function( code, body )
@@ -122,35 +117,41 @@ function express:Put( data, cb )
         body = data,
         success = success,
         failed = error,
-        headers = {
-            ["Content-Length"] = #data,
-            ["Accept"] = "application/json"
-        },
+        headers = { ["Content-Length"] = #data, ["Accept"] = "application/json" },
         type = "application/octet-stream",
         timeout = CLIENT and 240 or 60
     } )
 end
 
-
 -- Runs the express receiver for the given message --
 function express:Call( message, ply, data )
     local cb = self:_getReceiver( message )
-    if not cb then return end
+    if not cb then
+        return
+    end
 
-    if CLIENT then return cb( data ) end
-    if SERVER then return cb( ply, data ) end
+    if CLIENT then
+        return cb( data )
+    end
+    if SERVER then
+        return cb( ply, data )
+    end
 end
-
 
 -- Runs the express pre-download receiver for the given message --
 function express:CallPreDownload( message, ply, id, size, needsProof )
     local cb = self:_getPreDlReceiver( message )
-    if not cb then return end
+    if not cb then
+        return
+    end
 
-    if CLIENT then return cb( message, id, size, needsProof ) end
-    if SERVER then return cb( message, ply, id, size, needsProof ) end
+    if CLIENT then
+        return cb( message, id, size, needsProof )
+    end
+    if SERVER then
+        return cb( message, ply, id, size, needsProof )
+    end
 end
-
 
 -- Handles a net message containing an ID to download from the API --
 function express.OnMessage( _, ply )
@@ -165,13 +166,17 @@ function express.OnMessage( _, ply )
     local function makeRequest( size )
         if size then
             local check = express:CallPreDownload( message, ply, id, size, needsProof )
-            if check == false then return end
+            if check == false then
+                return
+            end
         end
 
         express:_get( id, function( data, hash )
             express:Call( message, ply, data )
 
-            if not needsProof then return end
+            if not needsProof then
+                return
+            end
             net.Start( "express_proof" )
             net.WriteString( hash )
             express.shSend( ply )
@@ -185,7 +190,6 @@ function express.OnMessage( _, ply )
     makeRequest()
 end
 
-
 -- Handles a net message containing a proof of data download --
 function express.OnProof( _, ply )
     -- Server prefixes the hash with the player's Steam ID
@@ -193,25 +197,17 @@ function express.OnProof( _, ply )
     local hash = prefix .. net.ReadString()
 
     local cb = express._awaitingProof[hash]
-    if not cb then return end
+    if not cb then
+        return
+    end
 
     cb( ply )
     express._awaitingProof[hash] = nil
 end
 
-
 net.Receive( "express", express.OnMessage )
 net.Receive( "express_proof", express.OnProof )
 
-include( "sh_helpers.lua" )
-
-if SERVER then
-    include( "sv_init.lua" )
-    AddCSLuaFile( "cl_init.lua" )
-else
-    include( "cl_init.lua" )
-end
-
 hook.Add( "CreateTeams", "ExpressLoaded", function()
     hook.Run( "ExpressLoaded" )
-end  )
+end )

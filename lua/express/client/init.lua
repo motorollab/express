@@ -1,7 +1,6 @@
 express._receiverMadeQueue = {}
 express._canSendReceiverMade = false
 
-
 net.Receive( "express_access", function()
     express:SetAccess( net.ReadString() )
     express:_sendReceiversMadeQueue()
@@ -28,7 +27,6 @@ function express:_alertReceiversMade( ... )
     net.SendToServer()
 end
 
-
 -- Registers a basic receiver --
 function express.Receive( message, cb )
     express:_setReceiver( message, cb )
@@ -41,12 +39,10 @@ function express.Receive( message, cb )
     express:_alertReceiversMade( message )
 end
 
-
 -- Calls the main _send function but passes nil for the recipient --
 function express.Send( message, data, onProof )
     express:_send( message, data, nil, onProof )
 end
-
 
 function express:SetExpected( hash, cb )
     self._awaitingProof[hash] = cb
