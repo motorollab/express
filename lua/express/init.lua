@@ -28,45 +28,61 @@ function express.ReceivePreDl( message, preDl )
     express._preDlReceivers[message] = preDl
 end
 
--- Retrieves and parses the data for given ID --
-function express:Get( id, cb, _attempts )
-    _attempts = _attempts or 0
-    local url = self:makeAccessURL( "read", id )
+---@diagnostic disable-next-line
+local flzma = flzma
 
-    local success = function( code, body )
-        if code == 404 then
-            assert( _attempts <= 35, "express:Get() failed to retrieve data after 35 attempts: " .. id )
-            timer.Simple( 0.125 * _attempts, function()
-                self:Get( id, cb, _attempts + 1 )
-            end )
-            return
-        end
-
-        express._checkResponseCode( code )
-        if _attempts > 0 then
-            print( "express:Get() succeeded after " .. _attempts .. " attempts: " .. id )
-        end
-
-        if string.StartsWith( body, "<enc>" ) then
-            body = util.Decompress( string.sub( body, 6 ) )
-            if (not body) or #body == 0 then
-                error( "Express: Failed to decompress data for ID '" .. id .. "'." )
-            end
-        end
-
-        local hash = util.SHA1( body )
-        local decodedData = pon.decode( body )
-        cb( decodedData, hash )
+---@param compressed string
+---@param callback fun( decompressed: string )
+local decompress = function( compressed, callback )
+    if not flzma then
+        callback( util.Decompress( compressed ) )
     end
 
-    HTTP( {
+    collectgarbage( "stop" )
+    flzma.DecompressAsync( compressed, function( decompressed )
+        callback( decompressed )
+        collectgarbage( "restart" )
+    end )
+end
+
+-- Retrieves and parses the data for given ID --
+function express:Get( id, callback )
+    local parameters = {
+        url = self:makeAccessURL( "read", id ),
         method = "GET",
-        url = url,
-        success = success,
         failed = error,
         headers = self._bytesHeaders,
         timeout = self:_getTimeout()
-    } )
+    }
+
+    local attempts = 1
+    parameters.success = function( code, body )
+        if code == 404 then
+            assert( attempts <= 35, "express:Get() failed to retrieve data after 35 attempts: " .. id )
+
+            timer.Simple( 0.125 * attempts, function()
+                HTTP( parameters )
+            end )
+
+            attempts = attempts + 1
+        else
+            express._checkResponseCode( code )
+
+            if attempts > 1 then
+                print( "express:Get() succeeded after " .. attempts .. " attempts: " .. id )
+            end
+
+            if string.StartsWith( body, "<lzma>" ) then
+                decompress( body:sub( 7 ), function( decompressed )
+                    callback( pon.decode( decompressed ), util.SHA1( decompressed ) )
+                end )
+            else
+                callback( pon.decode( body ), util.SHA1( body ) )
+            end
+        end
+    end
+
+    HTTP( parameters )
 end
 
 -- Asks the API for this ID's data's size --

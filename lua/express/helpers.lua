@@ -117,24 +117,51 @@ function express:_getSize( id, cb )
     end )
 end
 
+---@diagnostic disable-next-line
+local flzma = flzma
+
+---@param decompressed string
+---@param callback fun( compressed: string )
+local compress = function( decompressed, callback )
+    if not flzma then
+        callback( util.Compress( decompressed ) )
+    end
+
+    collectgarbage( "stop" )
+    flzma.CompressAsync( decompressed, function( compressed )
+        callback( compressed )
+        collectgarbage( "restart" )
+    end )
+end
+
 ---Encodes and compresses the given data, then sends it to the API if not already cached
-function express:_put( data, cb )
+function express:_put( data, callback )
     if table.Count( data ) == 0 then
         error( "Express: Tried to send empty data!" )
     end
 
     data = pon.encode( data )
-
     if string.len( data ) > self._maxDataSize then
-        data = "<enc>" .. util.Compress( data )
-        assert( data, "Express: Failed to compress data!" )
+        compress( data, function( compressed )
+            if not compressed then
+                error( "Express: Failed to compress data!" )
+            end
 
-        local dataLen = string.len( data )
-        if dataLen > self._maxDataSize then
-            error( "Express: Data too large (" .. dataLen .. " bytes)" )
-        end
+            data = "<lzma>" .. compressed
+
+            local length = #data
+            if length > self._maxDataSize then
+                error( "Express: Data too large (" .. length .. " bytes)" )
+            end
+
+            self:__put( data, callback )
+        end )
+    else
+        self:__put( data, callback )
     end
+end
 
+function express:__put( data, callback )
     local hash = util.SHA1( data )
 
     local cached = self._putCache[hash]
@@ -142,26 +169,23 @@ function express:_put( data, cb )
         local cachedAt = cached.cachedAt
 
         if os.time() <= (cachedAt + self._maxCacheTime) then
-            -- Force the callback to run asynchronously for consistency
-            timer.Simple( 0, function()
-                cb( cached.id, hash )
+            return timer.Simple( 0, function()
+                callback( cached.id, hash )
             end )
-
-            return
         end
     end
 
-    local function wrapCb( id )
+    local wrap = function( id )
         self._putCache[hash] = { id = id, cachedAt = os.time() }
-        cb( id, hash )
+        callback( id, hash )
     end
 
     if self.access then
-        return self:Put( data, wrapCb )
+        return self:Put( data, wrap )
     end
 
     table.insert( self._waitingForAccess, function()
-        self:Put( data, wrapCb )
+        self:Put( data, wrap )
     end )
 end
 
